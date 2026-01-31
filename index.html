@@ -250,16 +250,33 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script>
+        // Debug logging
+        console.log('Script loaded');
+        
+        // Check if Three.js loaded
+        if (typeof THREE === 'undefined') {
+            document.getElementById('loading').innerHTML = '<h1>⚠️ Error</h1><p>Three.js failed to load</p>';
+        }
+        
         // Hide loading when page loads
         window.addEventListener('load', () => {
+            console.log('Window loaded');
             setTimeout(() => {
                 const loading = document.getElementById('loading');
                 if (loading) {
                     loading.style.opacity = '0';
                     setTimeout(() => loading.style.display = 'none', 500);
                 }
-            }, 1000);
+            }, 1500);
         });
+    </script>
+    <script>
+        // Error handler
+        window.onerror = function(msg, url, line) {
+            console.error('Error:', msg, 'at', line);
+            document.getElementById('loading').innerHTML = '<h1>⚠️ Error</h1><p>' + msg + '</p>';
+            return false;
+        };
     </script>
     <script src="main.js"></script>
 </body>

@@ -23,6 +23,69 @@ const FARM_SIZE = 60;
 
 // Initialize
 function init() {
+    try {
+        console.log('Initializing farm...');
+        
+        // Scene
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87CEEB);
+        scene.fog = new THREE.Fog(0x87CEEB, 40, 100);
+        console.log('Scene created');
+
+        // Camera
+        camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+        updateCamera();
+        console.log('Camera created');
+
+        // Renderer
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        document.getElementById('canvas-container').appendChild(renderer.domElement);
+        console.log('Renderer created');
+
+        // Touch/Mouse events for camera control
+        setupControls();
+
+        // Lighting
+        setupLighting();
+        console.log('Lighting created');
+
+        // Create farm
+        createFarm();
+        console.log('Farm created');
+
+        // Create initial animals
+        for (let i = 0; i < 5; i++) addPig();
+        for (let i = 0; i < 2; i++) addDog();
+        console.log('Animals created');
+
+        // Events
+        window.addEventListener('resize', onWindowResize);
+        renderer.domElement.addEventListener('click', onClick);
+        renderer.domElement.addEventListener('touchstart', onTouch);
+
+        console.log('Initialization complete!');
+        
+        // Hide loading screen
+        setTimeout(() => {
+            const loading = document.getElementById('loading');
+            if (loading) {
+                loading.style.opacity = '0';
+                setTimeout(() => loading.style.display = 'none', 500);
+            }
+        }, 500);
+
+        // Start animation
+        animate();
+        
+    } catch (error) {
+        console.error('Init error:', error);
+        document.getElementById('loading').innerHTML = '<h1>⚠️ Init Error</h1><p>' + error.message + '</p>';
+    }
+}
     // Scene
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x87CEEB);
