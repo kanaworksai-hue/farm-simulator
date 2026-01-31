@@ -1,7 +1,7 @@
 // Farm Simulator - Three.js
 // A cute farm with pigs and dogs
 
-let scene, camera, renderer, controls;
+let scene, camera, renderer;
 let pigs = [];
 let dogs = [];
 let food = [];
@@ -10,7 +10,14 @@ let dayTime = 0;
 let isDay = true;
 let happiness = 100;
 let raycaster, mouse;
-let mixer;
+
+// Camera control variables
+let cameraAngle = 0;
+let cameraHeight = 30;
+let cameraDistance = 40;
+let touchStartX = 0;
+let touchStartY = 0;
+let isDragging = false;
 
 const FARM_SIZE = 60;
 
@@ -23,7 +30,7 @@ function init() {
 
     // Camera
     camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera.position.set(0, 30, 40);
+    updateCamera();
 
     // Renderer
     renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -33,14 +40,8 @@ function init() {
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     document.getElementById('canvas-container').appendChild(renderer.domElement);
 
-    // Controls
-    controls = new THREE.OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.05;
-    controls.maxPolarAngle = Math.PI / 2.1;
-    controls.minDistance = 15;
-    controls.maxDistance = 80;
-    controls.target.set(0, 0, 0);
+    // Touch/Mouse events for camera control
+    setupControls();
 
     // Raycaster for interaction
     raycaster = new THREE.Raycaster();
@@ -68,6 +69,83 @@ function init() {
 
     // Start animation
     animate();
+}
+
+function setupControls() {
+    const canvas = renderer.domElement;
+
+    // Touch events
+    canvas.addEventListener('touchstart', onTouchStart, { passive: false });
+    canvas.addEventListener('touchmove', onTouchMove, { passive: false });
+    canvas.addEventListener('touchend', onTouchEnd);
+
+    // Mouse events for desktop
+    let mouseDown = false;
+    canvas.addEventListener('mousedown', (e) => {
+        mouseDown = true;
+        touchStartX = e.clientX;
+        touchStartY = e.clientY;
+    });
+    canvas.addEventListener('mousemove', (e) => {
+        if (mouseDown) {
+            const deltaX = e.clientX - touchStartX;
+            const deltaY = e.clientY - touchStartY;
+            cameraAngle -= deltaX * 0.005;
+            cameraHeight = Math.max(10, Math.min(60, cameraHeight - deltaY * 0.1));
+            updateCamera();
+            touchStartX = e.clientX;
+            touchStartY = e.clientY;
+        }
+    });
+    canvas.addEventListener('mouseup', () => mouseDown = false);
+    canvas.addEventListener('mouseleave', () => mouseDown = false);
+
+    // Zoom with wheel
+    canvas.addEventListener('wheel', (e) => {
+        cameraDistance = Math.max(20, Math.min(80, cameraDistance + e.deltaY * 0.05));
+        updateCamera();
+    });
+}
+
+function onTouchStart(e) {
+    if (e.touches.length === 1) {
+        isDragging = true;
+        touchStartX = e.touches[0].clientX;
+        touchStartY = e.touches[0].clientY;
+    } else if (e.touches.length === 2) {
+        // Pinch to zoom
+        const dist = Math.hypot(
+            e.touches[0].clientX - e.touches[1].clientX,
+            e.touches[0].clientY - e.touches[1].clientY
+        );
+        cameraDistance = dist * 0.15;
+        cameraDistance = Math.max(20, Math.min(80, cameraDistance));
+        updateCamera();
+    }
+}
+
+function onTouchMove(e) {
+    if (e.touches.length === 1 && isDragging) {
+        e.preventDefault();
+        const deltaX = e.touches[0].clientX - touchStartX;
+        const deltaY = e.touches[0].clientY - touchStartY;
+        cameraAngle -= deltaX * 0.005;
+        cameraHeight = Math.max(10, Math.min(60, cameraHeight - deltaY * 0.1));
+        updateCamera();
+        touchStartX = e.touches[0].clientX;
+        touchStartY = e.touches[0].clientY;
+    }
+}
+
+function onTouchEnd(e) {
+    isDragging = false;
+}
+
+function updateCamera() {
+    camera.position.x = Math.sin(cameraAngle) * cameraDistance;
+    camera.position.z = Math.cos(cameraAngle) * cameraDistance;
+    camera.position.y = cameraHeight;
+    camera.lookAt(0, 0, 0);
 }
 
 function setupLighting() {
@@ -785,9 +863,6 @@ function animate() {
     // Update animals
     pigs.forEach(pig => pig.update(delta));
     dogs.forEach(dog => dog.update(delta));
-
-    // Update controls
-    controls.update();
 
     // Render
     renderer.render(scene, camera);

@@ -249,16 +249,16 @@
     <div id="message"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://unpkg.com/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script>
-        // Fallback if Three.js or OrbitControls fails to load
+        // Hide loading when page loads
         window.addEventListener('load', () => {
             setTimeout(() => {
                 const loading = document.getElementById('loading');
-                if (loading && loading.style.display !== 'none') {
-                    loading.innerHTML = '<h1>⚠️ Loading Error</h1><p>Please refresh the page</p><button onclick="location.reload()" style="margin-top:20px;padding:10px 20px;font-size:16px;">Reload</button>';
+                if (loading) {
+                    loading.style.opacity = '0';
+                    setTimeout(() => loading.style.display = 'none', 500);
                 }
-            }, 5000);
+            }, 1000);
         });
     </script>
     <script src="main.js"></script>
