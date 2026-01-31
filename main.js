@@ -18,8 +18,16 @@ let cameraDistance = 40;
 let touchStartX = 0;
 let touchStartY = 0;
 let isDragging = false;
+let uiTimer = 0;
 
 const FARM_SIZE = 60;
+const GROUND_FREQ = 0.1;
+const GROUND_AMPLITUDE = 1.5;
+const PIG_BASE_Y = 0.6;
+const DOG_BASE_Y = 0.5;
+const FOOD_RADIUS = 0.3;
+const FOOD_EAT_DISTANCE = 1.2;
+const FOOD_SEEK_DISTANCE = 12;
 
 // Initialize
 function init() {
@@ -48,6 +56,10 @@ function init() {
 
         // Touch/Mouse events for camera control
         setupControls();
+
+        // Raycaster for interaction
+        raycaster = new THREE.Raycaster();
+        mouse = new THREE.Vector2();
 
         // Lighting
         setupLighting();
@@ -85,53 +97,6 @@ function init() {
         console.error('Init error:', error);
         document.getElementById('loading').innerHTML = '<h1>⚠️ Init Error</h1><p>' + error.message + '</p>';
     }
-}
-    // Scene
-    scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x87CEEB);
-    scene.fog = new THREE.Fog(0x87CEEB, 40, 100);
-
-    // Camera
-    camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-    updateCamera();
-
-    // Renderer
-    renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    document.getElementById('canvas-container').appendChild(renderer.domElement);
-
-    // Touch/Mouse events for camera control
-    setupControls();
-
-    // Raycaster for interaction
-    raycaster = new THREE.Raycaster();
-    mouse = new THREE.Vector2();
-
-    // Lighting
-    setupLighting();
-
-    // Create farm
-    createFarm();
-
-    // Create initial animals
-    for (let i = 0; i < 5; i++) addPig();
-    for (let i = 0; i < 2; i++) addDog();
-
-    // Events
-    window.addEventListener('resize', onWindowResize);
-    renderer.domElement.addEventListener('click', onClick);
-    renderer.domElement.addEventListener('touchstart', onTouch);
-
-    // Hide loading
-    setTimeout(() => {
-        document.getElementById('loading').style.display = 'none';
-    }, 1000);
-
-    // Start animation
-    animate();
 }
 
 function setupControls() {
@@ -441,6 +406,37 @@ function createFlower(x, z) {
     scene.add(flowerGroup);
 }
 
+function getGroundHeight(x, z) {
+    return Math.sin(x * GROUND_FREQ) * Math.cos(z * GROUND_FREQ) * GROUND_AMPLITUDE;
+}
+
+function placeOnGround(object3d, baseHeight) {
+    object3d.position.y = getGroundHeight(object3d.position.x, object3d.position.z) + baseHeight;
+}
+
+function normalizeAngle(angle) {
+    return Math.atan2(Math.sin(angle), Math.cos(angle));
+}
+
+function rotateTowards(current, target, maxStep) {
+    const delta = normalizeAngle(target - current);
+    const step = Math.max(-maxStep, Math.min(maxStep, delta));
+    return normalizeAngle(current + step);
+}
+
+function createCapsuleMesh(radius, length, material) {
+    const group = new THREE.Group();
+    const cylinder = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, length, 12), material);
+    const sphereTop = new THREE.Mesh(new THREE.SphereGeometry(radius, 12, 12), material);
+    const sphereBottom = new THREE.Mesh(new THREE.SphereGeometry(radius, 12, 12), material);
+
+    sphereTop.position.y = length / 2;
+    sphereBottom.position.y = -length / 2;
+    group.add(cylinder, sphereTop, sphereBottom);
+
+    return group;
+}
+
 // Pig class
 class Pig {
     constructor(x, z) {
@@ -507,6 +503,7 @@ class Pig {
         positions.forEach((pos, i) => {
             const leg = new THREE.Mesh(legGeometry, legMaterial);
             leg.position.set(...pos);
+            leg.userData.baseY = leg.position.y;
             leg.castShadow = true;
             this.group.add(leg);
             this.legs.push(leg);
@@ -525,36 +522,45 @@ class Pig {
         this.tail = tail;
         this.group.add(tail);
 
-        this.group.position.set(x, 0.6, z);
+        this.group.position.set(x, PIG_BASE_Y, z);
+        placeOnGround(this.group, PIG_BASE_Y);
         scene.add(this.group);
 
         this.wanderAngle = Math.random() * Math.PI * 2;
         this.changeDirectionTime = 0;
+        this.heading = this.wanderAngle;
+        this.group.rotation.y = this.heading;
     }
 
     update(delta) {
-        this.hunger += delta * 0.5;
+        this.hunger = Math.min(100, this.hunger + delta * 0.8);
+        if (this.hunger > 25) {
+            this.happiness = Math.max(0, this.happiness - delta * 1.2);
+        }
         
-        if (this.hunger > 80) {
+        if (this.hunger > 50) {
             this.state = 'hungry';
         }
 
         // Look for food
-        if (this.state === 'hungry' && food.length > 0) {
+        if (food.length > 0) {
             let nearestFood = null;
             let nearestDist = Infinity;
             
-            food.forEach((f, i) => {
-                const dist = this.group.position.distanceTo(f.position);
+            food.forEach((f) => {
+                const dx = this.group.position.x - f.position.x;
+                const dz = this.group.position.z - f.position.z;
+                const dist = Math.hypot(dx, dz);
                 if (dist < nearestDist) {
                     nearestDist = dist;
                     nearestFood = f;
                 }
             });
 
-            if (nearestFood) {
+            const shouldSeekFood = this.state === 'hungry' || nearestDist < FOOD_SEEK_DISTANCE || Math.random() < 0.01;
+            if (nearestFood && shouldSeekFood) {
                 this.moveTowards(nearestFood.position, delta);
-                if (nearestDist < 1) {
+                if (nearestDist < FOOD_EAT_DISTANCE) {
                     this.eat(nearestFood);
                 }
                 return;
@@ -568,8 +574,8 @@ class Pig {
             this.changeDirectionTime = 2 + Math.random() * 3;
         }
 
-        const moveX = Math.cos(this.wanderAngle) * this.speed;
-        const moveZ = Math.sin(this.wanderAngle) * this.speed;
+        let moveX = Math.cos(this.wanderAngle) * this.speed;
+        let moveZ = Math.sin(this.wanderAngle) * this.speed;
 
         this.group.position.x += moveX;
         this.group.position.z += moveZ;
@@ -579,21 +585,28 @@ class Pig {
         if (Math.abs(this.group.position.x) > bound) {
             this.group.position.x = Math.sign(this.group.position.x) * bound;
             this.wanderAngle = Math.PI - this.wanderAngle;
+            moveX = Math.cos(this.wanderAngle) * this.speed;
+            moveZ = Math.sin(this.wanderAngle) * this.speed;
         }
         if (Math.abs(this.group.position.z) > bound) {
             this.group.position.z = Math.sign(this.group.position.z) * bound;
             this.wanderAngle = -this.wanderAngle;
+            moveX = Math.cos(this.wanderAngle) * this.speed;
+            moveZ = Math.sin(this.wanderAngle) * this.speed;
         }
 
         // Face direction
-        this.group.rotation.y = -this.wanderAngle + Math.PI / 2;
+        const targetYaw = Math.atan2(-moveZ, moveX);
+        this.heading = rotateTowards(this.heading, targetYaw, delta * 5);
+        this.group.rotation.y = this.heading;
+        placeOnGround(this.group, PIG_BASE_Y);
 
         // Animate legs
         const time = Date.now() * 0.01;
-        this.legs[0].position.y = Math.sin(time) * 0.1;
-        this.legs[1].position.y = Math.cos(time) * 0.1;
-        this.legs[2].position.y = Math.cos(time) * 0.1;
-        this.legs[3].position.y = Math.sin(time) * 0.1;
+        this.legs[0].position.y = this.legs[0].userData.baseY + Math.sin(time) * 0.1;
+        this.legs[1].position.y = this.legs[1].userData.baseY + Math.cos(time) * 0.1;
+        this.legs[2].position.y = this.legs[2].userData.baseY + Math.cos(time) * 0.1;
+        this.legs[3].position.y = this.legs[3].userData.baseY + Math.sin(time) * 0.1;
 
         // Wag tail
         this.tail.rotation.y = Math.sin(time * 2) * 0.3;
@@ -607,7 +620,10 @@ class Pig {
         this.group.position.x += direction.x * this.speed * 1.5;
         this.group.position.z += direction.z * this.speed * 1.5;
 
-        this.wanderAngle = Math.atan2(direction.x, direction.z);
+        const targetYaw = Math.atan2(-direction.z, direction.x);
+        this.heading = rotateTowards(this.heading, targetYaw, delta * 7);
+        this.group.rotation.y = this.heading;
+        placeOnGround(this.group, PIG_BASE_Y);
     }
 
     eat(foodItem) {
@@ -616,7 +632,7 @@ class Pig {
             scene.remove(foodItem);
             food.splice(index, 1);
             this.hunger = 0;
-            this.happiness = Math.min(100, this.happiness + 20);
+            this.happiness = Math.min(100, this.happiness + 40);
             this.state = 'wander';
             showMessage('🐷 Yummy!');
             updateUI();
@@ -654,11 +670,12 @@ class Dog {
         this.group = new THREE.Group();
         this.speed = 0.04 + Math.random() * 0.02;
         this.target = null;
+        this.happiness = 100;
+        this.heading = Math.random() * Math.PI * 2;
 
         // Body
-        const bodyGeometry = new THREE.CapsuleGeometry(0.4, 1.2, 8, 16);
         const bodyMaterial = new THREE.MeshStandardMaterial({ color: 0xA1887F });
-        const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+        const body = createCapsuleMesh(0.4, 1.2, bodyMaterial);
         body.rotation.z = Math.PI / 2;
         body.castShadow = true;
         this.group.add(body);
@@ -671,8 +688,7 @@ class Dog {
         this.group.add(head);
 
         // Snout
-        const snoutGeometry = new THREE.CapsuleGeometry(0.15, 0.3, 8, 16);
-        const snout = new THREE.Mesh(snoutGeometry, bodyMaterial);
+        const snout = createCapsuleMesh(0.15, 0.3, bodyMaterial);
         snout.position.set(1.1, 0.45, 0);
         snout.rotation.z = Math.PI / 2;
         this.group.add(snout);
@@ -716,19 +732,21 @@ class Dog {
         this.group.add(tail);
 
         // Legs
-        const legGeometry = new THREE.CapsuleGeometry(0.08, 0.5, 8, 16);
-        const positions = [[0.5, -0.3, 0.2], [0.5, -0.3, -0.2], [-0.3, -0.3, 0.2], [-0.3, -0.3, -0.2]];
+        const positions = [[0.5, -0.55, 0.2], [0.5, -0.55, -0.2], [-0.3, -0.55, 0.2], [-0.3, -0.55, -0.2]];
         this.legs = [];
         
         positions.forEach(pos => {
-            const leg = new THREE.Mesh(legGeometry, bodyMaterial);
+            const leg = createCapsuleMesh(0.08, 0.5, bodyMaterial);
             leg.position.set(...pos);
+            leg.userData.baseY = leg.position.y;
             leg.castShadow = true;
             this.group.add(leg);
             this.legs.push(leg);
         });
 
-        this.group.position.set(x, 0.5, z);
+        this.group.position.set(x, DOG_BASE_Y, z);
+        placeOnGround(this.group, DOG_BASE_Y);
+        this.group.rotation.y = this.heading;
         scene.add(this.group);
 
         this.wanderAngle = Math.random() * Math.PI * 2;
@@ -736,6 +754,11 @@ class Dog {
     }
 
     update(delta) {
+        let moveX = 0;
+        let moveZ = 0;
+        let targetYaw = this.heading;
+
+        this.happiness = Math.max(0, this.happiness - delta * 0.2);
         // Sometimes follow pigs or herd them
         if (Math.random() < 0.01) {
             this.herding = !this.herding;
@@ -748,13 +771,19 @@ class Dog {
                 .subVectors(new THREE.Vector3(0, 0, 0), targetPig.group.position)
                 .normalize();
             
-            this.group.position.x += herdDirection.x * this.speed * 0.5;
-            this.group.position.z += herdDirection.z * this.speed * 0.5;
+            moveX = herdDirection.x * this.speed * 0.5;
+            moveZ = herdDirection.z * this.speed * 0.5;
+            targetYaw = Math.atan2(-herdDirection.z, herdDirection.x);
+            this.group.position.x += moveX;
+            this.group.position.z += moveZ;
         } else {
             // Wander
             this.wanderAngle += (Math.random() - 0.5) * 0.2;
-            this.group.position.x += Math.cos(this.wanderAngle) * this.speed;
-            this.group.position.z += Math.sin(this.wanderAngle) * this.speed;
+            moveX = Math.cos(this.wanderAngle) * this.speed;
+            moveZ = Math.sin(this.wanderAngle) * this.speed;
+            targetYaw = Math.atan2(-moveZ, moveX);
+            this.group.position.x += moveX;
+            this.group.position.z += moveZ;
 
             // Keep in bounds
             const bound = FARM_SIZE * 0.9;
@@ -768,20 +797,25 @@ class Dog {
             }
         }
 
-        this.group.rotation.y = -this.wanderAngle + Math.PI / 2;
+        if (moveX !== 0 || moveZ !== 0) {
+            this.heading = rotateTowards(this.heading, targetYaw, delta * 6);
+            this.group.rotation.y = this.heading;
+            placeOnGround(this.group, DOG_BASE_Y);
+        }
 
         // Animate legs
         const time = Date.now() * 0.012;
-        this.legs[0].position.y = Math.sin(time) * 0.15;
-        this.legs[1].position.y = Math.cos(time) * 0.15;
-        this.legs[2].position.y = Math.cos(time) * 0.15;
-        this.legs[3].position.y = Math.sin(time) * 0.15;
+        this.legs[0].position.y = this.legs[0].userData.baseY + Math.sin(time) * 0.08;
+        this.legs[1].position.y = this.legs[1].userData.baseY + Math.cos(time) * 0.08;
+        this.legs[2].position.y = this.legs[2].userData.baseY + Math.cos(time) * 0.08;
+        this.legs[3].position.y = this.legs[3].userData.baseY + Math.sin(time) * 0.08;
 
         // Wag tail
         this.tail.rotation.y = Math.sin(time * 3) * 0.5;
     }
 
     pet() {
+        this.happiness = Math.min(100, this.happiness + 10);
         showMessage('🐕 Woof! ❤️');
         
         // Bark animation
@@ -820,7 +854,8 @@ function dropFood() {
     
     const x = (Math.random() - 0.5) * 40;
     const z = (Math.random() - 0.5) * 40;
-    foodItem.position.set(x, 0.5, z);
+    foodItem.position.set(x, FOOD_RADIUS, z);
+    placeOnGround(foodItem, FOOD_RADIUS);
     foodItem.castShadow = true;
     
     scene.add(foodItem);
@@ -926,6 +961,12 @@ function animate() {
     // Update animals
     pigs.forEach(pig => pig.update(delta));
     dogs.forEach(dog => dog.update(delta));
+
+    uiTimer += delta;
+    if (uiTimer >= 0.5) {
+        uiTimer = 0;
+        updateUI();
+    }
 
     // Render
     renderer.render(scene, camera);
